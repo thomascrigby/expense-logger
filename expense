@@ -6,12 +6,18 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
-# Store expenses in your home directory
-EXPENSE_FILE = Path.home() / "expenses.csv"
+# Store expenses in Google Drive for sync across devices
+GOOGLE_DRIVE = Path.home() / "Library/CloudStorage/GoogleDrive-thomascrigby@gmail.com/My Drive"
+EXPENSE_FILE = GOOGLE_DRIVE / "expenses.csv"
 
 
 def init_file():
     """Create the CSV file with headers if it doesn't exist."""
+    if not EXPENSE_FILE.parent.exists():
+        print(f"Error: Google Drive folder not found at {EXPENSE_FILE.parent}")
+        print("Make sure Google Drive is set up and syncing.")
+        sys.exit(1)
+
     if not EXPENSE_FILE.exists():
         with open(EXPENSE_FILE, "w", newline="") as f:
             writer = csv.writer(f)
