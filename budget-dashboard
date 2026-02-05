@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""Generate a visual budget dashboard and post to Slack."""
+
+import subprocess
+import json
+from datetime import datetime
+from typing import Optional
+
+# Configuration
+SPREADSHEET_ID = "1hyZD2x1v9Xk7UjWQfy4KKttR2fVYBjMf5COAA9nOku8"
+SLACK_CHANNEL = "C0ADFH7K333"  # #family-budget
+GOG_PATH = "/opt/homebrew/bin/gog"
+
+# Category rows in the spreadsheet (0-indexed from the values array)
+CATEGORIES = {
+    "Housing": {"row": 10, "items": range(11, 19)},
+    "Other Living": {"row": 20, "items": range(21, 29)},
+    "Monthly Subs": {"row": 30, "items": range(31, 35)},
+    "Expense Calendar": {"row": 36, "items": range(37, 48)},
+    "Giving": {"row": 49, "items": range(50, 51)},
+    "Savings": {"row": 58, "items": range(59, 60)},
+    "Guilt Free": {"row": 61, "items": range(62, 65)},
+}
+
+
+def parse_money(value: str) -> float:
+    """Parse a money string like ' $ 1,234.56 ' to float."""
+    if not value or value.strip() in ["", "-", "$ -"]:
+        return 0.0
+    cleaned = value.replace("$", "").replace(",", "").replace(" ", "").strip()
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
+def get_budget_data() -> list:
+    """Fetch budget data from Google Sheets."""
+    result = subprocess.run(
+        [GOG_PATH, "sheets", "get", SPREADSHEET_ID, "Budget!A1:E70", "--json"],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        raise Exception(f"Failed to fetch budget: {result.stderr}")
+
+    data = json.loads(result.stdout)
+    return data.get("values", [])
+
+
+def progress_bar(spent: float, budgeted: float, width: int = 10) -> str:
+    """Generate a text progress bar."""
+    if budgeted == 0:
+        if spent == 0:
+            return "░" * width
+        return "█" * width + " ⚠️"
+
+    pct = min(spent / budgeted, 1.5)  # Cap at 150% for display
+    filled = int(pct * width)
+    filled = min(filled, width)
+
+    bar = "█" * filled + "░" * (width - filled)
+
+    # Add warning if over budget
+    if spent > budgeted:
+        bar += " 🔴"
+    elif spent >= budgeted * 0.9:
+        bar += " 🟡"
+    else:
+        bar += " 🟢"
+
+    return bar
+
+
+def month_progress() -> tuple[float, str]:
+    """Calculate how far through the month we are."""
+    now = datetime.now()
+    day = now.day
+
+    # Days in current month
+    if now.month == 12:
+        next_month = datetime(now.year + 1, 1, 1)
+    else:
+        next_month = datetime(now.year, now.month + 1, 1)
+    days_in_month = (next_month - datetime(now.year, now.month, 1)).days
+
+    pct = day / days_in_month
+    bar = progress_bar(day, days_in_month, 20)
+
+    return pct, f"Day {day} of {days_in_month} ({pct*100:.0f}%)\n{bar}"
+
+
+def generate_dashboard() -> str:
+    """Generate the full dashboard message."""
+    values = get_budget_data()
+    month_pct, month_bar = month_progress()
+    now = datetime.now()
+
+    lines = [
+        f"*📊 Budget Dashboard — {now.strftime('%B %Y')}*",
+        "",
+        f"*Month Progress:*  {month_bar}",
+        "",
+        "─" * 40,
+    ]
+
+    # Get totals
+    total_row = None
+    for i, row in enumerate(values):
+        if len(row) > 1 and row[1] == "TOTAL EXPENSES":
+            total_row = row
+            break
+
+    if total_row:
+        budgeted = parse_money(total_row[2]) if len(total_row) > 2 else 0
+        spent = parse_money(total_row[3]) if len(total_row) > 3 else 0
+        remaining = budgeted - spent
+        spent_pct = (spent / budgeted * 100) if budgeted > 0 else 0
+
+        lines.extend([
+            "",
+            f"*Overall Spending*",
+            f"Spent: ${spent:,.2f} of ${budgeted:,.2f} ({spent_pct:.0f}%)",
+            f"{progress_bar(spent, budgeted, 20)}",
+            f"_Remaining: ${remaining:,.2f}_",
+            "",
+            "─" * 40,
+            "",
+        ])
+
+    # Category breakdown
+    lines.append("*Category Breakdown*")
+    lines.append("")
+
+    for cat_name, cat_info in CATEGORIES.items():
+        row_idx = cat_info["row"]
+        if row_idx >= len(values):
+            continue
+
+        row = values[row_idx]
+        if len(row) < 4:
+            continue
+
+        budgeted = parse_money(row[2])
+        spent = parse_money(row[3])
+
+        if budgeted == 0 and spent == 0:
+            continue
+
+        pct = (spent / budgeted * 100) if budgeted > 0 else 0
+        bar = progress_bar(spent, budgeted, 10)
+
+        # Compare spending pace to month pace
+        if budgeted > 0:
+            pace_diff = (spent / budgeted) - month_pct
+            if pace_diff > 0.1:
+                pace = "📈 ahead"
+            elif pace_diff < -0.1:
+                pace = "📉 behind"
+            else:
+                pace = "➡️ on pace"
+        else:
+            pace = ""
+
+        lines.append(f"*{cat_name}*  {bar}  ${spent:,.0f}/${budgeted:,.0f} ({pct:.0f}%)  {pace}")
+
+    lines.extend([
+        "",
+        "─" * 40,
+        "",
+        f"_Updated: {now.strftime('%b %d, %Y at %I:%M %p')}_",
+        f"<https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}|View Full Budget>"
+    ])
+
+    return "\n".join(lines)
+
+
+def post_to_slack(message: str):
+    """Post the dashboard to Slack."""
+    # Use the Slack MCP via a simple approach - write to file and use claude
+    print(message)
+    print("\n" + "=" * 50)
+    print("Dashboard generated. Posting to Slack...")
+
+    # For now, just print - the actual posting will be done via MCP
+    return message
+
+
+if __name__ == "__main__":
+    dashboard = generate_dashboard()
+    print(dashboard)
