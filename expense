@@ -1,47 +1,37 @@
 #!/usr/bin/env python3
-"""Quick expense logger - appends expenses to a CSV file."""
+"""Quick expense logger - appends expenses to Google Sheets."""
 
 import sys
-import csv
+import subprocess
 from datetime import datetime
-from pathlib import Path
 
-# Store expenses in Google Drive for sync across devices
-GOOGLE_DRIVE = Path.home() / "Library/CloudStorage/GoogleDrive-thomascrigby@gmail.com/My Drive"
-EXPENSE_FILE = GOOGLE_DRIVE / "expenses.csv"
-
-
-def init_file():
-    """Create the CSV file with headers if it doesn't exist."""
-    if not EXPENSE_FILE.parent.exists():
-        print(f"Error: Google Drive folder not found at {EXPENSE_FILE.parent}")
-        print("Make sure Google Drive is set up and syncing.")
-        sys.exit(1)
-
-    if not EXPENSE_FILE.exists():
-        with open(EXPENSE_FILE, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["date", "time", "amount", "category", "description"])
+# Google Sheets configuration
+SPREADSHEET_ID = "1cNwWQDbaNRSc3pKj-7CCSBY1zkz0m8cop3vkIHrLcF0"
+SHEET_RANGE = "Sheet1!A:E"
+GOG_PATH = "/opt/homebrew/bin/gog"
 
 
 def log_expense(amount: str, category: str, description: str = ""):
-    """Append an expense to the CSV file."""
-    init_file()
-
+    """Append an expense to Google Sheets."""
     now = datetime.now()
+    date = now.strftime("%Y-%m-%d")
+    time = now.strftime("%H:%M")
 
-    with open(EXPENSE_FILE, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            now.strftime("%Y-%m-%d"),
-            now.strftime("%H:%M"),
-            amount,
-            category,
-            description
-        ])
+    # Format values as pipe-separated for gog sheets append
+    row_values = f"{date}|{time}|{amount}|{category}|{description}"
+
+    result = subprocess.run(
+        [GOG_PATH, "sheets", "append", SPREADSHEET_ID, SHEET_RANGE, row_values],
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        print(f"Error: {result.stderr}")
+        sys.exit(1)
 
     print(f"Logged: ${amount} [{category}] {description}")
-    print(f"Saved to: {EXPENSE_FILE}")
+    print(f"View at: https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}")
 
 
 def show_usage():
@@ -52,7 +42,8 @@ def show_usage():
     print("  expense 45 gas")
     print("  expense 120.00 utilities Electric bill")
     print()
-    print(f"Expenses are saved to: {EXPENSE_FILE}")
+    print(f"Expenses are saved to Google Sheets:")
+    print(f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}")
 
 
 if __name__ == "__main__":
