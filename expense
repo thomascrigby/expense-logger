@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Quick expense logger - appends expenses to a CSV file."""
+
+import sys
+import csv
+from datetime import datetime
+from pathlib import Path
+
+# Store expenses in your home directory
+EXPENSE_FILE = Path.home() / "expenses.csv"
+
+
+def init_file():
+    """Create the CSV file with headers if it doesn't exist."""
+    if not EXPENSE_FILE.exists():
+        with open(EXPENSE_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["date", "time", "amount", "category", "description"])
+
+
+def log_expense(amount: str, category: str, description: str = ""):
+    """Append an expense to the CSV file."""
+    init_file()
+
+    now = datetime.now()
+
+    with open(EXPENSE_FILE, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            now.strftime("%Y-%m-%d"),
+            now.strftime("%H:%M"),
+            amount,
+            category,
+            description
+        ])
+
+    print(f"Logged: ${amount} [{category}] {description}")
+    print(f"Saved to: {EXPENSE_FILE}")
+
+
+def show_usage():
+    print("Usage: expense <amount> <category> [description]")
+    print()
+    print("Examples:")
+    print('  expense 12.50 groceries "Coffee and bagels"')
+    print("  expense 45 gas")
+    print("  expense 120.00 utilities Electric bill")
+    print()
+    print(f"Expenses are saved to: {EXPENSE_FILE}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        show_usage()
+        sys.exit(1)
+
+    amount = sys.argv[1]
+    category = sys.argv[2]
+    description = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
+
+    log_expense(amount, category, description)
